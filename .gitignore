@@ -1,0 +1,4 @@
+.agents
+.scripts
+*.log
+*.tmp
