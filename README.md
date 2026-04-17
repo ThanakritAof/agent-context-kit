@@ -231,7 +231,3 @@ Run the scaffold inside a Git working tree if you want the active context to cap
 - The Bash script is the main entry point.
 - The Python generator is standalone and uses only the standard library.
 - The scaffold can recreate `scripts/update_repo_context.py`, so `bash agents.sh --clean` is reversible by running `bash agents.sh` again.
-
-## License
-
-Add a project license here if this repository is going to be shared publicly.
