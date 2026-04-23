@@ -2,3 +2,4 @@
 .scripts
 *.log
 *.tmp
+.agents/private/

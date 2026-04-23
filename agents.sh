@@ -11,17 +11,27 @@ FORCE=0
 CLEAN=0
 RUN_GENERATOR=1
 MAX_DEPTH=4
+TASK_TITLE=""
+TASK_STATUS="in_progress"
+UPDATE_TASK_FILE=""
 
 usage() {
   cat <<EOF
-Usage: bash $SCRIPT_NAME [--force] [--clean] [--no-generate] [--max-depth N] [--help]
+Usage:
+  bash $SCRIPT_NAME [--force] [--clean] [--no-generate] [--max-depth N] [--help]
+  bash $SCRIPT_NAME --start-task "Task title" [--task-status STATUS]
+  bash $SCRIPT_NAME --update-task .agents/sessions/YYYY-MM-DDTHH-MM-SS-task.md --task-status STATUS
 
 Options:
-  --force         Overwrite scaffold files that already exist.
-  --clean         Remove all scaffold files.
-  --no-generate   Skip the repository tree generation step.
-  --max-depth N   Set repository tree depth (default: 4).
-  --help          Show this help message.
+  --force             Overwrite scaffold files that already exist.
+  --clean             Remove all scaffold files.
+  --no-generate       Skip the repository tree generation step.
+  --max-depth N       Set repository tree depth (default: 4).
+  --start-task TITLE  Create a session note before implementation starts.
+  --update-task FILE  Update an existing session note status.
+  --task-status NAME  Task status: planned, in_progress, blocked, completed.
+                      Default: in_progress.
+  --help              Show this help message.
 EOF
 }
 
@@ -40,6 +50,21 @@ while [[ $# -gt 0 ]]; do
     --force)       FORCE=1; shift ;;
     --clean)       CLEAN=1; shift ;;
     --no-generate) RUN_GENERATOR=0; shift ;;
+    --start-task)
+      require_value "$1" "${2:-}"
+      TASK_TITLE="$2"
+      shift; shift
+      ;;
+    --update-task)
+      require_value "$1" "${2:-}"
+      UPDATE_TASK_FILE="$2"
+      shift; shift
+      ;;
+    --task-status)
+      require_value "$1" "${2:-}"
+      TASK_STATUS="$2"
+      shift; shift
+      ;;
     --max-depth)
       require_value "$1" "${2:-}"
       MAX_DEPTH="$2"
@@ -52,6 +77,19 @@ done
 
 if ! [[ "$MAX_DEPTH" =~ ^[0-9]+$ ]]; then
   die "--max-depth must be a non-negative integer"
+fi
+
+case "$TASK_STATUS" in
+  planned|in_progress|blocked|completed) ;;
+  *) die "--task-status must be one of: planned, in_progress, blocked, completed" ;;
+esac
+
+if [[ -n "$TASK_TITLE" && -n "$UPDATE_TASK_FILE" ]]; then
+  die "--start-task and --update-task cannot be used together"
+fi
+
+if [[ "$CLEAN" -eq 1 && ( -n "$TASK_TITLE" || -n "$UPDATE_TASK_FILE" ) ]]; then
+  die "--clean cannot be combined with task lifecycle options"
 fi
 
 cd "$SCRIPT_DIR"
@@ -129,6 +167,316 @@ ensure_line_in_file() {
   fi
 }
 
+done_flag_for_status() {
+  if [[ "$1" == "completed" ]]; then
+    printf 'true'
+  else
+    printf 'false'
+  fi
+}
+
+escape_yaml_double_quoted() {
+  local value="$1"
+
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '%s' "$value"
+}
+
+slugify_task_title() {
+  local title="$1"
+  local slug
+
+  slug="$(
+    printf '%s' "$title" \
+      | LC_ALL=C tr '[:upper:]' '[:lower:]' \
+      | LC_ALL=C tr -cs '[:alnum:]' '-' \
+      | sed 's/^-*//; s/-*$//; s/--*/-/g'
+  )"
+  slug="${slug:0:60}"
+
+  if [[ -z "$slug" ]]; then
+    slug="task"
+  fi
+
+  printf '%s' "$slug"
+}
+
+unique_session_path() {
+  local slug="$1"
+  local timestamp_prefix
+  local candidate
+  local index
+
+  timestamp_prefix="$(date +%Y-%m-%dT%H-%M-%S)"
+  candidate=".agents/sessions/${timestamp_prefix}-${slug}.md"
+
+  if [[ ! -e "$candidate" ]]; then
+    printf '%s' "$candidate"
+    return 0
+  fi
+
+  index=2
+  while true; do
+    candidate=".agents/sessions/${timestamp_prefix}-${slug}-${index}.md"
+    if [[ ! -e "$candidate" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+    index=$((index + 1))
+  done
+}
+
+write_active_for_task() {
+  local task_title="$1"
+  local task_status="$2"
+  local session_path="$3"
+  local updated_at="$4"
+  local escaped_title
+  local escaped_session_path
+  local done_flag
+  local current_state
+  local next_action
+
+  escaped_title="$(escape_yaml_double_quoted "$task_title")"
+  escaped_session_path="$(escape_yaml_double_quoted "$session_path")"
+  done_flag="$(done_flag_for_status "$task_status")"
+
+  case "$task_status" in
+    planned)
+      current_state="Task is registered before implementation."
+      next_action="Start implementation and update the session note when progress changes."
+      ;;
+    in_progress)
+      current_state="Task is registered and in progress."
+      next_action="Continue implementation and update the session note at the next meaningful checkpoint."
+      ;;
+    blocked)
+      current_state="Task is blocked."
+      next_action="Resolve or document the blocker before continuing implementation."
+      ;;
+    completed)
+      current_state="Task is completed."
+      next_action="Review verification notes or start the next task."
+      ;;
+  esac
+
+  cat > ".agents/active.md" <<ACTIVE_EOF
+---
+updated_at: "${updated_at}"
+status: "${task_status}"
+current_focus: "${escaped_title}"
+branch: "${CURRENT_BRANCH}"
+project_type: "${PROJECT_TYPES}"
+session_note: "${escaped_session_path}"
+done: ${done_flag}
+---
+
+# Active Context
+
+## Objective
+${task_title}
+
+## Current State
+- ${current_state}
+- Session note: \`${session_path}\`
+- Status: \`${task_status}\`
+- Done: \`${done_flag}\`
+
+## Blockers
+(none recorded)
+
+## Next Action
+${next_action}
+ACTIVE_EOF
+
+  log "update .agents/active.md"
+}
+
+create_task_session_note() {
+  local task_title="$1"
+  local task_status="$2"
+  local created_at
+  local escaped_title
+  local slug
+  local session_path
+  local done_flag
+
+  created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  escaped_title="$(escape_yaml_double_quoted "$task_title")"
+  slug="$(slugify_task_title "$task_title")"
+  session_path="$(unique_session_path "$slug")"
+  done_flag="$(done_flag_for_status "$task_status")"
+
+  cat > "$session_path" <<TASK_EOF
+---
+created_at: "${created_at}"
+updated_at: "${created_at}"
+status: "${task_status}"
+done: ${done_flag}
+task: "${escaped_title}"
+branch: "${CURRENT_BRANCH}"
+project_type: "${PROJECT_TYPES}"
+---
+
+# Session Note: ${task_title}
+
+## Summary
+Task registered before implementation so the work is resumable even if the agent stops early.
+
+## Status
+- Current status: \`${task_status}\`
+- Done: \`${done_flag}\`
+
+## Current State
+- No implementation changes recorded yet.
+
+## Decisions
+- Session note created before coding.
+
+## Blockers
+- None recorded.
+
+## Files Touched
+- None yet.
+
+## Commands Run
+- \`bash agents.sh --start-task "${task_title}"\`
+
+## Next Todo
+- Start the task.
+- Update this note when status, files touched, blockers, or next steps change.
+
+## Resume Prompt
+Resume \`${task_title}\` from this session note. Read \`.agents/active.md\`, then inspect the files listed here before editing.
+TASK_EOF
+
+  write_active_for_task "$task_title" "$task_status" "$session_path" "$created_at"
+  log "write $session_path"
+}
+
+extract_task_title_from_session() {
+  local session_path="$1"
+  local task_title
+
+  task_title="$(sed -n 's/^task: "\(.*\)"$/\1/p' "$session_path" | head -n 1)"
+  task_title="${task_title//\\\"/\"}"
+  task_title="${task_title//\\\\/\\}"
+
+  if [[ -z "$task_title" ]]; then
+    task_title="$(basename "$session_path" .md)"
+  fi
+
+  printf '%s' "$task_title"
+}
+
+update_task_session_status() {
+  local session_path="$1"
+  local task_status="$2"
+  local updated_at
+  local done_flag
+  local tmp
+  local task_title
+
+  if [[ ! -f "$session_path" ]]; then
+    die "session note not found: $session_path"
+  fi
+
+  updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  done_flag="$(done_flag_for_status "$task_status")"
+  tmp="$(mktemp)"
+
+  awk -v updated_at="$updated_at" -v task_status="$task_status" -v done_flag="$done_flag" '
+    BEGIN {
+      in_frontmatter = 0
+      in_status_section = 0
+      seen_updated_at = 0
+      seen_status = 0
+      seen_done = 0
+      seen_status_line = 0
+      seen_done_line = 0
+    }
+    NR == 1 && $0 == "---" {
+      in_frontmatter = 1
+      print
+      next
+    }
+    in_frontmatter && $0 == "---" {
+      if (!seen_updated_at) {
+        print "updated_at: \"" updated_at "\""
+      }
+      if (!seen_status) {
+        print "status: \"" task_status "\""
+      }
+      if (!seen_done) {
+        print "done: " done_flag
+      }
+      in_frontmatter = 0
+      print
+      next
+    }
+    in_frontmatter && $0 ~ /^updated_at:/ {
+      print "updated_at: \"" updated_at "\""
+      seen_updated_at = 1
+      next
+    }
+    in_frontmatter && $0 ~ /^status:/ {
+      print "status: \"" task_status "\""
+      seen_status = 1
+      next
+    }
+    in_frontmatter && $0 ~ /^done:/ {
+      print "done: " done_flag
+      seen_done = 1
+      next
+    }
+    $0 == "## Status" {
+      in_status_section = 1
+      seen_status_line = 0
+      seen_done_line = 0
+      print
+      next
+    }
+    in_status_section && $0 ~ /^## / {
+      if (!seen_status_line) {
+        print "- Current status: `" task_status "`"
+      }
+      if (!seen_done_line) {
+        print "- Done: `" done_flag "`"
+      }
+      in_status_section = 0
+      print
+      next
+    }
+    in_status_section && $0 ~ /^- Current status:/ {
+      print "- Current status: `" task_status "`"
+      seen_status_line = 1
+      next
+    }
+    in_status_section && $0 ~ /^- Done:/ {
+      print "- Done: `" done_flag "`"
+      seen_done_line = 1
+      next
+    }
+    {
+      print
+    }
+  ' "$session_path" > "$tmp"
+
+  install -m 0644 "$tmp" "$session_path"
+  rm -f "$tmp"
+
+  {
+    printf '\n## Status Update - %s\n' "$updated_at"
+    printf -- '- Status: `%s`\n' "$task_status"
+    printf -- '- Done: `%s`\n' "$done_flag"
+  } >> "$session_path"
+
+  task_title="$(extract_task_title_from_session "$session_path")"
+  write_active_for_task "$task_title" "$task_status" "$session_path" "$updated_at"
+  log "update $session_path"
+}
+
 # ── create directories ──────────────────────────────────────
 
 mkdir -p \
@@ -150,6 +498,15 @@ write_file ".agents/AGENTS.md" <<'AGENTS_EOF'
 ## Purpose
 This repository uses `.agents/` as a structured agent context workspace for humans and AI agents.
 Keep this file short. Store policy here, not task history.
+
+## Mention Behavior
+When the user mentions `@AGENTS`, `@ AGENTS`, or attaches this file without extra instructions:
+- Treat this file as the active operating policy.
+- Read `.agents/active.md` immediately.
+- If `.agents/active.md` points to an unfinished session note, summarize the task, status, blocker, and next action, then ask whether to resume it.
+- If there is no unfinished session note, say that agent context is loaded and ready for the next task.
+- Do not require the user to type "read this file" or any extra setup instruction.
+- Do not create a new session note until the user provides a concrete task.
 
 ## Reading Order & Trust Priority
 Before non-trivial work, read in this order. When information conflicts, higher items win.
@@ -176,8 +533,10 @@ If notes conflict with the codebase, trust the codebase.
 
 ## Rules
 - Read `.agents/active.md` before meaningful work.
+- Before starting non-trivial implementation, run `bash agents.sh --start-task "short task title"` so the task is recorded immediately.
 - Update `.agents/active.md` when focus, blocker, or next action changes.
-- Create a session note (`YYYY-MM-DD-short-topic.md`) at resumable checkpoints.
+- Keep the active session note updated at resumable checkpoints.
+- When work is blocked or completed, run `bash agents.sh --update-task .agents/sessions/YYYY-MM-DDTHH-MM-SS-short-topic.md --task-status blocked|completed`.
 - Promote only durable, evidenced knowledge into `.agents/topics/`.
 - Record evidence: file paths, commands, outputs, decisions.
 - Mark uncertainty explicitly.
@@ -186,17 +545,21 @@ If notes conflict with the codebase, trust the codebase.
 Do not store: secrets, raw transcripts, chain-of-thought, speculative notes, duplicate summaries.
 
 ## Session Notes Format
-Include: Summary, Current State, Decisions, Blockers, Files Touched, Commands Run, Next Todo, Resume Prompt.
+File names use local time in `YYYY-MM-DDTHH-MM-SS-task-slug.md`.
+Include: frontmatter with `status` and `done`, Summary, Status, Current State, Decisions, Blockers, Files Touched, Commands Run, Next Todo, Resume Prompt.
 
 ## Minimum Update Contract
-After meaningful work:
-- `.agents/active.md` — when focus, blockers, or next steps change
-- `.agents/sessions/` — when a task reaches a checkpoint
+For meaningful work:
+- `.agents/sessions/` — create before implementation starts
+- `.agents/active.md` — update when focus, blockers, status, or next steps change
+- `.agents/sessions/` — update when a task reaches a checkpoint, blocks, or completes
 - `.agents/topics/` — only when knowledge is durable beyond the current task
 
 ## Maintenance
 ```
 bash agents.sh                         # scaffold or refresh
+bash agents.sh --start-task "..."      # create an in-progress task note
+bash agents.sh --update-task .agents/sessions/YYYY-MM-DDTHH-MM-SS-topic.md --task-status completed
 bash agents.sh --force                 # overwrite all scaffold files
 bash agents.sh --clean                 # remove scaffold entirely
 python3 scripts/update_repo_context.py # regenerate repo tree
@@ -484,6 +847,18 @@ PY_EOF
 
 ensure_line_in_file ".gitignore" ".agents/private/"
 
+# ── task lifecycle ──────────────────────────────────────────
+
+if [[ -n "$TASK_TITLE" ]]; then
+  create_task_session_note "$TASK_TITLE" "$TASK_STATUS"
+  RUN_GENERATOR=0
+fi
+
+if [[ -n "$UPDATE_TASK_FILE" ]]; then
+  update_task_session_status "$UPDATE_TASK_FILE" "$TASK_STATUS"
+  RUN_GENERATOR=0
+fi
+
 # ── repo tree generation ────────────────────────────────────
 
 if [[ "$RUN_GENERATOR" -eq 1 ]]; then
@@ -508,7 +883,7 @@ Created:
   .agents/AGENTS.md
   .agents/active.md
   .agents/index/repo-tree.md
-  .agents/sessions/   (empty, for checkpoints)
+  .agents/sessions/   (for task notes and checkpoints)
   .agents/topics/service-overview.md
   .agents/topics/     (for durable knowledge)
   .agents/private/    (gitignored)
@@ -516,6 +891,8 @@ Created:
 
 Commands:
   bash agents.sh                         # scaffold
+  bash agents.sh --start-task "..."      # create task note
+  bash agents.sh --update-task FILE --task-status completed
   bash agents.sh --force                 # overwrite
   bash agents.sh --clean                 # remove
   python3 scripts/update_repo_context.py # regen tree
