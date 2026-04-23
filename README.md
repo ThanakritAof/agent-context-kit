@@ -82,13 +82,21 @@ Then send the real task in the next message:
 Fix the rate limit recovery flow so interrupted work can resume.
 ```
 
-When the task is concrete, the agent should create the task note automatically before implementation:
+When the task is concrete, the agent should create a planned task note automatically:
 
 ```bash
 bash agents.sh --start-task "Short task title"
 ```
 
-The generated session note records the task immediately, so the work remains resumable even if the agent stops because of a rate limit or interruption.
+The generated session note starts with `status: "planned"` and includes a `## Plan` section. The agent should fill in the files to inspect, files expected to change, proposed changes, verification plan, risks, and approval state before editing code.
+
+After you approve the plan, the agent should update the task:
+
+```bash
+bash agents.sh --update-task .agents/sessions/YYYY-MM-DDTHH-MM-SS-short-task-title.md --task-status in_progress
+```
+
+The task is recorded before implementation, so the work remains resumable even if the agent stops because of a rate limit or interruption.
 
 ### Resume After Rate Limit
 
@@ -125,7 +133,7 @@ scripts/
 - `.agents/AGENTS.md`: repository-level rules for humans and agents
 - `.agents/active.md`: current task focus, state, blockers, and next action
 - `.agents/index/repo-tree.md`: generated filesystem overview used as quick context
-- `.agents/sessions/`: task notes created before implementation starts, plus resumable checkpoints
+- `.agents/sessions/`: planned task notes created before implementation starts, plus resumable checkpoints
 - `.agents/topics/`: durable notes that should outlive a single task
 - `.agents/private/`: local-only notes that should never be shared
 - `scripts/update_repo_context.py`: standalone generator for refreshing the repo tree
@@ -146,15 +154,21 @@ Scaffold or refresh missing files:
 bash agents.sh
 ```
 
-Create a task note manually before implementation starts:
+Create a planned task note manually before implementation starts:
 
 ```bash
 bash agents.sh --start-task "Add billing retry handling"
 ```
 
-This is normally called by the agent after you provide a concrete task. It creates a file in `.agents/sessions/`, marks it as `in_progress`, and updates `.agents/active.md` to point at that session note.
+This is normally called by the agent after you provide a concrete task. It creates a file in `.agents/sessions/`, marks it as `planned`, adds a plan template, and updates `.agents/active.md` to point at that session note.
 
 Session note filenames use local time in `YYYY-MM-DDTHH-MM-SS-task-slug.md`, for example `2026-04-23T16-32-10-add-billing-retry-handling.md`.
+
+Mark a task as in progress after plan approval:
+
+```bash
+bash agents.sh --update-task .agents/sessions/YYYY-MM-DDTHH-MM-SS-add-billing-retry-handling.md --task-status in_progress
+```
 
 Mark a task as completed:
 
@@ -194,10 +208,10 @@ bash agents.sh --clean
 
 Supported task statuses:
 
-- `planned`
-- `in_progress`
-- `blocked`
-- `completed`
+- `planned`: task is recorded and the implementation plan is being prepared or reviewed
+- `in_progress`: plan is approved and implementation has started
+- `blocked`: work cannot continue without a decision, dependency, or fix
+- `completed`: work and verification are finished
 
 Task lifecycle commands do not regenerate `.agents/index/repo-tree.md`; run the generator separately when the repository structure changes.
 
@@ -260,10 +274,13 @@ This keeps `.agents/index/repo-tree.md` focused on the application structure ins
 2. Fill in `.agents/topics/service-overview.md` with real project details.
 3. In the agent chat, mention `@AGENTS` to load the context policy.
 4. Send the concrete task.
-5. Let the agent run `bash agents.sh --start-task "short task title"` before implementation.
-6. Let the agent update the generated session note and `.agents/active.md` as work moves forward.
-7. When the task is blocked or finished, the agent should run `bash agents.sh --update-task FILE --task-status blocked` or `completed`.
-8. Refresh `.agents/index/repo-tree.md` whenever the repository structure changes significantly.
+5. Let the agent run `bash agents.sh --start-task "short task title"` to create a `planned` session note.
+6. Review the agent's plan. The plan should name scope, files to inspect, files expected to change, proposed changes, verification, and risks.
+7. Approve the plan before implementation starts.
+8. Let the agent run `bash agents.sh --update-task FILE --task-status in_progress`.
+9. Let the agent update the generated session note and `.agents/active.md` as work moves forward.
+10. When the task is blocked or finished, the agent should run `bash agents.sh --update-task FILE --task-status blocked` or `completed`.
+11. Refresh `.agents/index/repo-tree.md` whenever the repository structure changes significantly.
 
 ## Troubleshooting
 

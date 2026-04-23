@@ -12,7 +12,7 @@ CLEAN=0
 RUN_GENERATOR=1
 MAX_DEPTH=4
 TASK_TITLE=""
-TASK_STATUS="in_progress"
+TASK_STATUS="planned"
 UPDATE_TASK_FILE=""
 
 usage() {
@@ -27,10 +27,10 @@ Options:
   --clean             Remove all scaffold files.
   --no-generate       Skip the repository tree generation step.
   --max-depth N       Set repository tree depth (default: 4).
-  --start-task TITLE  Create a session note before implementation starts.
+  --start-task TITLE  Create a planned session note before implementation starts.
   --update-task FILE  Update an existing session note status.
   --task-status NAME  Task status: planned, in_progress, blocked, completed.
-                      Default: in_progress.
+                      Default: planned.
   --help              Show this help message.
 EOF
 }
@@ -244,8 +244,8 @@ write_active_for_task() {
 
   case "$task_status" in
     planned)
-      current_state="Task is registered before implementation."
-      next_action="Start implementation and update the session note when progress changes."
+      current_state="Task is planned. Implementation is waiting for plan approval."
+      next_action="Write or review the plan, then update status to in_progress after user approval."
       ;;
     in_progress)
       current_state="Task is registered and in progress."
@@ -322,17 +322,43 @@ project_type: "${PROJECT_TYPES}"
 # Session Note: ${task_title}
 
 ## Summary
-Task registered before implementation so the work is resumable even if the agent stops early.
+Task registered before implementation. Complete the plan and get approval before changing code.
 
 ## Status
 - Current status: \`${task_status}\`
 - Done: \`${done_flag}\`
 
 ## Current State
-- No implementation changes recorded yet.
+- Task note created before implementation.
+- Plan must be completed before editing files.
+
+## Plan
+
+### Scope
+- Goal:
+- Non-goals:
+
+### Files To Inspect
+- \`path/to/file\` — why this file matters
+
+### Files Expected To Change
+- \`path/to/file\`
+
+### Proposed Changes
+- Describe the intended changes before editing.
+
+### Verification Plan
+- \`command to run\`
+
+### Risks
+- Note compatibility, migration, data, UX, or test risks.
+
+### Approval
+Waiting for user approval before implementation.
 
 ## Decisions
 - Session note created before coding.
+- Implementation must wait until the plan is approved.
 
 ## Blockers
 - None recorded.
@@ -344,8 +370,9 @@ Task registered before implementation so the work is resumable even if the agent
 - \`bash agents.sh --start-task "${task_title}"\`
 
 ## Next Todo
-- Start the task.
-- Update this note when status, files touched, blockers, or next steps change.
+- Fill in the plan with concrete files and verification steps.
+- Ask the user to approve the plan.
+- After approval, run \`bash agents.sh --update-task "${session_path}" --task-status in_progress\`.
 
 ## Resume Prompt
 Resume \`${task_title}\` from this session note. Read \`.agents/active.md\`, then inspect the files listed here before editing.
@@ -527,13 +554,16 @@ If notes conflict with the codebase, trust the codebase.
 |------|---------|
 | `.agents/active.md` | Hot working state — current focus, blockers, next action |
 | `.agents/topics/` | Durable knowledge that survives across sessions |
-| `.agents/sessions/` | Per-task checkpoints and resumable logs |
+| `.agents/sessions/` | Planned task notes, checkpoints, and resumable logs |
 | `.agents/private/` | Local-only notes (gitignored, never shared) |
 | `.agents/index/repo-tree.md` | Auto-generated directory tree |
 
 ## Rules
 - Read `.agents/active.md` before meaningful work.
-- Before starting non-trivial implementation, run `bash agents.sh --start-task "short task title"` so the task is recorded immediately.
+- Before starting non-trivial implementation, run `bash agents.sh --start-task "short task title"` so the task is recorded immediately with `status: "planned"`.
+- Before editing files, fill the active session note `## Plan` with Scope, Files To Inspect, Files Expected To Change, Proposed Changes, Verification Plan, Risks, and Approval.
+- Ask the user to approve the plan. Do not implement until the user explicitly approves.
+- After approval, run `bash agents.sh --update-task .agents/sessions/YYYY-MM-DDTHH-MM-SS-short-topic.md --task-status in_progress`.
 - Update `.agents/active.md` when focus, blocker, or next action changes.
 - Keep the active session note updated at resumable checkpoints.
 - When work is blocked or completed, run `bash agents.sh --update-task .agents/sessions/YYYY-MM-DDTHH-MM-SS-short-topic.md --task-status blocked|completed`.
@@ -546,11 +576,12 @@ Do not store: secrets, raw transcripts, chain-of-thought, speculative notes, dup
 
 ## Session Notes Format
 File names use local time in `YYYY-MM-DDTHH-MM-SS-task-slug.md`.
-Include: frontmatter with `status` and `done`, Summary, Status, Current State, Decisions, Blockers, Files Touched, Commands Run, Next Todo, Resume Prompt.
+Include: frontmatter with `status` and `done`, Summary, Status, Current State, Plan, Approval, Decisions, Blockers, Files Touched, Commands Run, Next Todo, Resume Prompt.
 
 ## Minimum Update Contract
 For meaningful work:
-- `.agents/sessions/` — create before implementation starts
+- `.agents/sessions/` — create before implementation starts with `status: "planned"`
+- `.agents/sessions/` — fill the `## Plan` section before editing files
 - `.agents/active.md` — update when focus, blockers, status, or next steps change
 - `.agents/sessions/` — update when a task reaches a checkpoint, blocks, or completes
 - `.agents/topics/` — only when knowledge is durable beyond the current task
@@ -558,7 +589,7 @@ For meaningful work:
 ## Maintenance
 ```
 bash agents.sh                         # scaffold or refresh
-bash agents.sh --start-task "..."      # create an in-progress task note
+bash agents.sh --start-task "..."      # create a planned task note
 bash agents.sh --update-task .agents/sessions/YYYY-MM-DDTHH-MM-SS-topic.md --task-status completed
 bash agents.sh --force                 # overwrite all scaffold files
 bash agents.sh --clean                 # remove scaffold entirely
@@ -891,7 +922,7 @@ Created:
 
 Commands:
   bash agents.sh                         # scaffold
-  bash agents.sh --start-task "..."      # create task note
+  bash agents.sh --start-task "..."      # create planned task note
   bash agents.sh --update-task FILE --task-status completed
   bash agents.sh --force                 # overwrite
   bash agents.sh --clean                 # remove
