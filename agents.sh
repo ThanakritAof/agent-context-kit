@@ -129,7 +129,18 @@ detect_project_types() {
   fi
 }
 
-CURRENT_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+local_iso_timestamp() {
+  local timestamp
+  local prefix
+  local suffix
+
+  timestamp="$(date +%Y-%m-%dT%H:%M:%S%z)"
+  prefix="${timestamp%??}"
+  suffix="${timestamp#$prefix}"
+  printf '%s:%s' "$prefix" "$suffix"
+}
+
+CURRENT_DATE="$(local_iso_timestamp)"
 CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'not a git repo')"
 PROJECT_TYPES="$(detect_project_types)"
 
@@ -302,7 +313,7 @@ create_task_session_note() {
   local session_path
   local done_flag
 
-  created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  created_at="$(local_iso_timestamp)"
   escaped_title="$(escape_yaml_double_quoted "$task_title")"
   slug="$(slugify_task_title "$task_title")"
   session_path="$(unique_session_path "$slug")"
@@ -409,7 +420,7 @@ update_task_session_status() {
     die "session note not found: $session_path"
   fi
 
-  updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  updated_at="$(local_iso_timestamp)"
   done_flag="$(done_flag_for_status "$task_status")"
   tmp="$(mktemp)"
 
@@ -576,6 +587,7 @@ Do not store: secrets, raw transcripts, chain-of-thought, speculative notes, dup
 
 ## Session Notes Format
 File names use local time in `YYYY-MM-DDTHH-MM-SS-task-slug.md`.
+Frontmatter timestamps use local time with an explicit timezone offset, such as `2026-04-23T19:56:52+07:00`.
 Include: frontmatter with `status` and `done`, Summary, Status, Current State, Plan, Approval, Decisions, Blockers, Files Touched, Commands Run, Next Todo, Resume Prompt.
 
 ## Minimum Update Contract

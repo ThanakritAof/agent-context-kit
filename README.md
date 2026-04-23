@@ -163,6 +163,7 @@ bash agents.sh --start-task "Add billing retry handling"
 This is normally called by the agent after you provide a concrete task. It creates a file in `.agents/sessions/`, marks it as `planned`, adds a plan template, and updates `.agents/active.md` to point at that session note.
 
 Session note filenames use local time in `YYYY-MM-DDTHH-MM-SS-task-slug.md`, for example `2026-04-23T16-32-10-add-billing-retry-handling.md`.
+Session frontmatter timestamps also use local time with an explicit timezone offset, for example `2026-04-23T16:32:10+07:00`.
 
 Mark a task as in progress after plan approval:
 
