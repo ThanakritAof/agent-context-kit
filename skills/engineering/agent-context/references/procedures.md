@@ -304,6 +304,7 @@ Run only when the user asks to uninstall managed context.
 2. Remove the managed block (everything from `<!-- agent-context-kit:start -->` through `<!-- agent-context-kit:end -->`, inclusive) from `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md`. For each: if nothing meaningful remains (only the `# Agent Instructions` heading in `AGENTS.md`, or an otherwise empty file), delete the file; otherwise keep the remaining user content.
 3. Delete the installed `ac-*.md` commands from `.claude/commands/`, `.agent/workflows/`, and `.codex/prompts/` (whichever exist). Remove each directory that becomes empty.
 4. Remove the `.context.local/` line from `.gitignore`, keeping other lines.
+5. If the [continuity hook](#continuity-hook-optional) was installed for any vendor, remove it from that vendor's config file per its removal note — only if the user confirms it was installed, since it is opt-in and not part of default Initialize.
 
 ## Regenerate index.md
 
@@ -445,10 +446,11 @@ Claude Code does not read `AGENTS.md`; the `@AGENTS.md` line inside `CLAUDE.md` 
 
 ## Slash commands
 
-Initialize installs five commands, all prefixed `/ac-` to avoid clashing with built-ins (`/resume`, `/complete`) or other skills. Each command body is a thin wrapper in [assets/templates/commands/](../assets/templates/commands/) that points back to this file — do not duplicate action logic into it.
+Initialize installs six commands, all prefixed `/ac-` to avoid clashing with built-ins (`/resume`, `/complete`) or other skills. Each command body is a thin wrapper in [assets/templates/commands/](../assets/templates/commands/) that points back to this file — do not duplicate action logic into it.
 
 | Command | Action |
 |---|---|
+| `/ac-init` | [Initialize](#initialize) this repository |
 | `/ac-note <text>` | Add an item to the backlog (see [Backlog](#backlog)) |
 | `/ac-backlog` | View / manage the backlog |
 | `/ac-resume` | [Resume](#resume--inspect) briefing |
@@ -459,11 +461,69 @@ Install each command file (same file name `ac-<name>.md`) into the location the 
 
 | Vendor | Directory | Invoked as |
 |---|---|---|
-| Claude Code | `.claude/commands/` | `/ac-note` … |
+| Claude Code | `.claude/commands/` (project) or `~/.claude/commands/` (personal) | `/ac-note` … |
 | Antigravity | `.agent/workflows/` | `/ac-note` … |
 | Codex | `.codex/prompts/` (repo) or `~/.codex/prompts/` (user) | `/ac-note` … |
 
 Codex custom prompts are user-scoped and deprecating in favor of skills; if repo-level `/ac-` commands are not picked up, the same actions still work by asking in plain language (Codex reads `AGENTS.md`). Only create directories/commands for vendors the user actually uses; skip a command file that already exists unless the user asks to overwrite.
+
+`/ac-init` has a bootstrap problem the other five don't: it only gets installed *by* Initialize, so it doesn't exist yet in a repository that has never been initialized — plain language ("use the agent-context skill, initialize") is the only way to trigger it there. This is moot once the skill itself is installed at the personal/global scope (e.g. via `npx skills add <repo> -a <agent>` without `--project`, or `~/.claude/skills/`): install `/ac-init` at the matching personal scope too (`~/.claude/commands/ac-init.md` for Claude Code; Codex prompts are user-scoped by default) so it is available in every repository immediately, before that repository has been initialized.
+
+## Continuity hook (optional)
+
+Everything above is loaded once (vendor entrypoint at session start) and after that relies on the agent choosing to re-read `summary.md` — nothing re-asserts it mid-session. On a long session, especially around context compaction, that instruction can fade before the agent thinks to refresh it.
+
+Claude Code, Codex, and Antigravity each have a real `SessionStart` hook mechanism with (as far as could be verified) the same shape: a `matcher` on the trigger source, a `command`, and plain stdout automatically added as context. Installing the same one-line command in each closes the gap, independent of whether the agent remembers to act.
+
+Run this only when the user explicitly asks for it (e.g. "install the continuity hook") — never as part of default Initialize. Each vendor's hook lives in that vendor's own config, so skipping one (or all) never affects the others or the baseline pointer-file design.
+
+The command is identical everywhere:
+
+```
+cat docs/context/summary.md 2>/dev/null || true
+```
+
+It degrades safely to no output (not an error) when `docs/context/` doesn't exist yet.
+
+| Vendor | File | Confidence |
+|---|---|---|
+| Claude Code | `.claude/settings.json` (project) or `~/.claude/settings.json` (personal) | High — official docs |
+| Codex | `.codex/hooks.json` (project) or `~/.codex/hooks.json` (user) | High — official docs |
+| Antigravity | `.agents/hooks.json` (project) or `~/.gemini/antigravity-cli/hooks.json` (global) | Medium — schema pieced together from third-party sources, not confirmed against an official reference; verify it actually fires before relying on it |
+
+Claude Code and Codex use the identical JSON shape:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat docs/context/summary.md 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Antigravity's `hooks.json` is assumed to use the same shape (unconfirmed — some third-party examples wrap it in an extra custom-named key instead of a bare `hooks` key; if the hook doesn't fire in practice, that wrapper is the first thing to try).
+
+Install procedure, per vendor file — never overwrite the file wholesale, since it may hold unrelated settings/hooks:
+
+1. Read the target file. If it does not exist, create it with just the JSON above (Codex and Antigravity ship no `hooks.json` by default, so this is usually a fresh file; Claude Code's `settings.json` usually already exists with other keys).
+2. If it exists but has no `hooks` key, add one with just `SessionStart` as above, leaving every other key untouched.
+3. If `hooks` exists but has no `SessionStart` array, add the `SessionStart` key above without touching sibling keys (`PreToolUse`, etc.).
+4. If `hooks.SessionStart` already exists, check its entries for the exact `command` string `cat docs/context/summary.md 2>/dev/null || true`. If found, it's already installed — do nothing. Otherwise append a new entry (the object with `matcher` and `hooks` above) to the existing array.
+5. Validate the result is well-formed JSON before considering the step done.
+
+The `matcher` fires on new sessions, `--resume`/`--continue`, `/clear`, and right after compaction — the last one is what matters most: even if nobody remembered to refresh `summary.md` before compaction, the hook re-injects whatever it currently says immediately after, so state is never fully lost.
+
+To remove it (part of [Clean](#clean) if the user asks): in each vendor file that has it, find the `hooks.SessionStart` entry with that exact command string and remove it; delete the `SessionStart` key if it becomes empty; leave every other key untouched.
 
 ## Task frontmatter schema
 

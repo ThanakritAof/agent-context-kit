@@ -50,6 +50,49 @@ ln -s "$(pwd)/skills/engineering/agent-context" .agents/skills/agent-context   #
 
 Either way, tell the agent to run the skill's **Initialize** action once per target repo — it scaffolds `docs/context/`, the `AGENTS.md`/`CLAUDE.md`/`GEMINI.md` pointers, the `/ac-` slash commands, and the `.gitignore` entry. Native install is optional: the skill also works by just telling any agent to "use the agent-context skill" — it's designed for explicit invocation, not description-matching.
 
+If you installed the skill globally (as `npx skills add` does by default), also drop `/ac-init` at the same personal scope so it works in any repo without a prior Initialize run there:
+
+```bash
+mkdir -p ~/.claude/commands
+curl -fsSL https://raw.githubusercontent.com/ThanakritAof/agent-context-kit/main/skills/engineering/agent-context/assets/templates/commands/ac-init.md \
+  -o ~/.claude/commands/ac-init.md
+```
+
+### Continuity hook (optional)
+
+Everything else here is loaded once at session start and relies on the agent choosing to re-read it later — nothing re-asserts it mid-session, so it can fade on a long conversation, especially around context compaction. Claude Code, Codex, and Antigravity each support a real `SessionStart` hook that re-injects `docs/context/summary.md` on session start, resume, `/clear`, and right after compaction — so state survives even if nobody remembered to refresh it first. Ask the agent to "install the continuity hook" and it merges the JSON below into whichever vendor(s) you name; each is independent, so installing (or skipping) one never affects the others.
+
+The command is the same for all three:
+
+```
+cat docs/context/summary.md 2>/dev/null || true
+```
+
+| Vendor | File | Confidence |
+|---|---|---|
+| Claude Code | `.claude/settings.json` (project) or `~/.claude/settings.json` (personal) | High |
+| Codex | `.codex/hooks.json` (project) or `~/.codex/hooks.json` (user) | High |
+| Antigravity | `.agents/hooks.json` (project) or `~/.gemini/antigravity-cli/hooks.json` (global) | Medium — schema not confirmed against an official reference; verify it actually fires |
+
+Claude Code and Codex share this exact shape (merge into the file's existing `hooks` object — don't overwrite other hooks/settings):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          { "type": "command", "command": "cat docs/context/summary.md 2>/dev/null || true" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Antigravity's `hooks.json` is assumed to use the same shape. See [Continuity hook](skills/engineering/agent-context/references/procedures.md#continuity-hook-optional) for the exact merge/removal steps.
+
 ## Reference
 
 - **[agent-context](./skills/engineering/agent-context/SKILL.md)** — Initialize and maintain vendor-neutral repository context: project overview, durable topics, active work, checkpoints, rolling summaries, a backlog of things to do next, and resumable handoffs across Claude Code, Codex, and Antigravity. Trigger by asking to initialize, save, checkpoint, summarize, restore, or resume project context.
@@ -74,10 +117,11 @@ The summary refresh interval is configured by `every_checkpoints:` in `docs/cont
 
 | Command | What it does |
 |---|---|
+| `/ac-init` | Initialize this repository |
 | `/ac-note <text>` | Add an item to the backlog |
 | `/ac-backlog` | View / manage the backlog |
 | `/ac-resume` | Report resumable work (blockers first) plus the backlog |
 | `/ac-checkpoint [note]` | Checkpoint the active task |
 | `/ac-complete` | Complete and archive the active task |
 
-Optional shortcuts — the same actions work in plain language. Installed per vendor at `.claude/commands/`, `.agent/workflows/`, `.codex/prompts/`.
+Optional shortcuts — the same actions work in plain language. Installed per vendor at `.claude/commands/`, `.agent/workflows/`, `.codex/prompts/`. `/ac-init` is the exception: it's only installed *by* Initialize, so a never-initialized repo won't have it yet. Install it at the personal scope too (`~/.claude/commands/ac-init.md`) so it works before that first run — see [Install](#install).
