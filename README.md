@@ -1,327 +1,83 @@
 # agent-context-kit
 
-Lightweight scaffolding for adding an `.agents/` context layer to a repository. This project creates a small, opinionated workspace for humans and AI agents: policy notes, active task context, task session notes, resumable checkpoints, durable topic notes, and a generated repository tree index.
+Vendor-neutral, persistent project context for AI coding agents. Shared state lives under `docs/context/`, stays reviewable in Git, and survives chat resets, compaction, and switching agents (Claude Code, Codex, Antigravity).
 
-## Why This Exists
-
-Large language model workflows degrade when context is scattered across chat history, local notes, and undocumented conventions. `agent-context-kit` keeps that context close to the codebase so agents can resume work faster and with less guesswork.
-
-## Key Features
-
-- Scaffolds a consistent `.agents/` directory structure
-- Creates starter files for policy, active state, and durable notes
-- Creates task session notes before implementation starts, with explicit status tracking
-- Generates `.agents/index/repo-tree.md` from the current filesystem
-- Detects basic project types and records them in `.agents/active.md`
-- Preserves existing scaffold files unless you explicitly use `--force`
-- Supports cleanup with a single `--clean` flag
-
-## Requirements
-
-- macOS or Linux
-- `bash`
-- `python3` for repository tree generation
-- Standard Unix utilities available on most developer machines: `install`, `mktemp`, `grep`, `rm`, `rmdir`
-
-Git is optional. If the script is run outside a Git working tree, the generated active context falls back to `branch: "not a git repo"`.
-
-## Repository Layout
-
-This repository currently contains the scaffold entry point and the tree generator:
+## Layout
 
 ```text
-.
-├── agents.sh
-├── scripts/
-│   └── update_repo_context.py
-└── .agents/
-    ├── AGENTS.md
-    ├── active.md
-    ├── index/
-    ├── private/
-    ├── sessions/
-    └── topics/
+skills/engineering/agent-context/   # the installable skill (SKILL.md + references/ + assets/)
+docs/context/                       # per-project context this skill manages
+AGENTS.md / CLAUDE.md / GEMINI.md   # short pointers so any agent auto-discovers docs/context/
 ```
 
-## Quick Start
-
-Run the scaffold from the repository root:
-
-```bash
-bash agents.sh
-```
-
-On a normal run, the script:
-
-1. Creates the `.agents/` folder structure if it does not exist
-2. Writes starter files such as `.agents/AGENTS.md` and `.agents/active.md`
-3. Creates `scripts/update_repo_context.py`
-4. Ensures `.agents/private/` is present in `.gitignore`
-5. Validates the Python generator with `python3 -m py_compile`
-6. Generates `.agents/index/repo-tree.md`
-
-## Recommended Agent Flow
-
-After the scaffold exists, the normal agent startup prompt is just:
+`docs/context/`:
 
 ```text
-@AGENTS
+docs/context/
+├── index.md                # generated routing table
+├── summary.md              # generated rolling summary — read this first
+├── project.md              # durable project-wide context
+├── backlog.md              # things to do next, captured with /ac-note
+├── config.yaml             # tracking and summary policy
+├── topics/                 # reusable, evidenced knowledge
+├── work/                   # active task state and checkpoints
+├── archive/                # completed task records
+└── generated/repo-tree.md  # reproducible repository structure
+
+.context.local/             # gitignored machine-local/private context
 ```
 
-The expected agent behavior is:
+The skill is instruction-driven — no program to install or run. The agent performs every action with its own file tools plus `date`/`git`/`find` (optionally `tree`), following [SKILL.md](skills/engineering/agent-context/SKILL.md) and [references/procedures.md](skills/engineering/agent-context/references/procedures.md). Never stores secrets, raw transcripts, or chain-of-thought.
 
-1. Read `.agents/AGENTS.md`
-2. Read `.agents/active.md`
-3. Summarize any unfinished session note and ask whether to resume it
-4. If there is no unfinished session, say that agent context is loaded and ready
-5. Wait for a concrete task before creating a new session note
+## Install
 
-Then send the real task in the next message:
-
-```text
-Fix the rate limit recovery flow so interrupted work can resume.
-```
-
-When the task is concrete, the agent should create a planned task note automatically:
+### With `npx skills` (recommended — works for every agent)
 
 ```bash
-bash agents.sh --start-task "Short task title"
+# Claude Code
+npx skills add ThanakritAof/agent-context-kit -a claude-code
+
+# Other agents (codex, antigravity, gemini-cli, cursor, etc.)
+npx skills add ThanakritAof/agent-context-kit -a <agent-name>
 ```
 
-The generated session note starts with `status: "planned"` and includes a `## Plan` section. The agent should fill in the files to inspect, files expected to change, proposed changes, verification plan, risks, and approval state before editing code.
-
-After you approve the plan, the agent should update the task:
+### Alternative — symlink
 
 ```bash
-bash agents.sh --update-task .agents/sessions/YYYY-MM-DDTHH-MM-SS-short-task-title.md --task-status in_progress
+ln -s "$(pwd)/skills/engineering/agent-context" .claude/skills/agent-context   # Claude Code
+ln -s "$(pwd)/skills/engineering/agent-context" .agents/skills/agent-context   # Codex
 ```
 
-The task is recorded before implementation, so the work remains resumable even if the agent stops because of a rate limit or interruption.
-
-### Resume After Rate Limit
-
-If the agent stops mid-task, start the next session with:
-
-```text
-@AGENTS
-```
-
-The agent should read `.agents/active.md`, inspect the unfinished session note, summarize the current task, and ask whether to continue from that note.
-
-## Generated Files
-
-After `bash agents.sh`, you should have:
-
-```text
-.agents/
-├── AGENTS.md
-├── active.md
-├── index/
-│   └── repo-tree.md
-├── private/
-│   └── .gitkeep
-├── sessions/
-│   └── .gitkeep
-└── topics/
-    └── service-overview.md
-scripts/
-└── update_repo_context.py
-```
-
-### What Each File Is For
-
-- `.agents/AGENTS.md`: repository-level rules for humans and agents
-- `.agents/active.md`: current task focus, state, blockers, and next action
-- `.agents/index/repo-tree.md`: generated filesystem overview used as quick context
-- `.agents/sessions/`: planned task notes created before implementation starts, plus resumable checkpoints
-- `.agents/topics/`: durable notes that should outlive a single task
-- `.agents/private/`: local-only notes that should never be shared
-- `scripts/update_repo_context.py`: standalone generator for refreshing the repo tree
-
-## CLI Reference
-
-### `agents.sh`
-
-Show help:
-
-```bash
-bash agents.sh --help
-```
-
-Scaffold or refresh missing files:
-
-```bash
-bash agents.sh
-```
-
-Create a planned task note manually before implementation starts:
-
-```bash
-bash agents.sh --start-task "Add billing retry handling"
-```
-
-This is normally called by the agent after you provide a concrete task. It creates a file in `.agents/sessions/`, marks it as `planned`, adds a plan template, and updates `.agents/active.md` to point at that session note.
-
-Session note filenames use local time in `YYYY-MM-DDTHH-MM-SS-task-slug.md`, for example `2026-04-23T16-32-10-add-billing-retry-handling.md`.
-Session frontmatter timestamps also use local time with an explicit timezone offset, for example `2026-04-23T16:32:10+07:00`.
-
-Mark a task as in progress after plan approval:
-
-```bash
-bash agents.sh --update-task .agents/sessions/YYYY-MM-DDTHH-MM-SS-add-billing-retry-handling.md --task-status in_progress
-```
-
-Mark a task as completed:
-
-```bash
-bash agents.sh --update-task .agents/sessions/YYYY-MM-DDTHH-MM-SS-add-billing-retry-handling.md --task-status completed
-```
-
-Mark a task as blocked:
-
-```bash
-bash agents.sh --update-task .agents/sessions/YYYY-MM-DDTHH-MM-SS-add-billing-retry-handling.md --task-status blocked
-```
-
-Overwrite existing scaffold files:
-
-```bash
-bash agents.sh --force
-```
-
-Skip repository tree generation:
-
-```bash
-bash agents.sh --no-generate
-```
-
-Increase traversal depth when building the tree:
-
-```bash
-bash agents.sh --max-depth 6
-```
-
-Remove the scaffolded artifacts:
-
-```bash
-bash agents.sh --clean
-```
-
-Supported task statuses:
-
-- `planned`: task is recorded and the implementation plan is being prepared or reviewed
-- `in_progress`: plan is approved and implementation has started
-- `blocked`: work cannot continue without a decision, dependency, or fix
-- `completed`: work and verification are finished
-
-Task lifecycle commands do not regenerate `.agents/index/repo-tree.md`; run the generator separately when the repository structure changes.
-
-### `scripts/update_repo_context.py`
-
-Generate or refresh the repository tree manually:
-
-```bash
-python3 scripts/update_repo_context.py
-```
-
-Available options:
-
-```bash
-python3 scripts/update_repo_context.py --help
-```
-
-Common examples:
-
-```bash
-python3 scripts/update_repo_context.py --max-depth 6
-python3 scripts/update_repo_context.py --root .
-python3 scripts/update_repo_context.py --output .agents/index/repo-tree.md
-```
-
-## How Detection Works
-
-`agents.sh` inspects the repository root to label the project in `.agents/active.md`. It currently recognizes:
-
-- `node` via `package.json`
-- `python` via `pyproject.toml`, `setup.py`, or `requirements.txt`
-- `go` via `go.mod`
-- `rust` via `Cargo.toml`
-- `ruby` via `Gemfile`
-- `jvm` via `pom.xml`, `build.gradle`, or `build.gradle.kts`
-- `make` via `Makefile` or `makefile`
-- `docker-compose` via `docker-compose.yml` or `docker-compose.yaml`
-- `docker` via `Dockerfile`
-
-If nothing matches, the project type is recorded as `unknown`.
-
-## Repository Tree Behavior
-
-The tree generator intentionally excludes noisy directories and caches, including:
-
-- `.agents`
-- `.git`
-- `node_modules`
-- `dist`
-- `build`
-- `coverage`
-- `tmp`
-- common editor and Python cache directories
-
-This keeps `.agents/index/repo-tree.md` focused on the application structure instead of generated files.
-
-## Typical Workflow
-
-1. Run `bash agents.sh` once to create the scaffold.
-2. Fill in `.agents/topics/service-overview.md` with real project details.
-3. In the agent chat, mention `@AGENTS` to load the context policy.
-4. Send the concrete task.
-5. Let the agent run `bash agents.sh --start-task "short task title"` to create a `planned` session note.
-6. Review the agent's plan. The plan should name scope, files to inspect, files expected to change, proposed changes, verification, and risks.
-7. Approve the plan before implementation starts.
-8. Let the agent run `bash agents.sh --update-task FILE --task-status in_progress`.
-9. Let the agent update the generated session note and `.agents/active.md` as work moves forward.
-10. When the task is blocked or finished, the agent should run `bash agents.sh --update-task FILE --task-status blocked` or `completed`.
-11. Refresh `.agents/index/repo-tree.md` whenever the repository structure changes significantly.
-
-## Troubleshooting
-
-### `python3 not found`
-
-The scaffold still creates most files, but automatic tree generation is skipped. Install Python 3 and rerun:
-
-```bash
-python3 scripts/update_repo_context.py
-```
-
-### Existing files were not updated
-
-This is expected. The scaffold is idempotent by default. Use:
-
-```bash
-bash agents.sh --force
-```
-
-### The tree output looks too shallow
-
-Increase the scan depth:
-
-```bash
-bash agents.sh --max-depth 6
-```
-
-or:
-
-```bash
-python3 scripts/update_repo_context.py --max-depth 6
-```
-
-### Branch shows `not a git repo`
-
-Run the scaffold inside a Git working tree if you want the active context to capture the current branch name.
-
-## Development Notes
-
-- There is no build step for this repository.
-- The Bash script is the main entry point.
-- The Python generator is standalone and uses only the standard library.
-- The scaffold can recreate `scripts/update_repo_context.py`, so `bash agents.sh --clean` is reversible by running `bash agents.sh` again.
+Either way, tell the agent to run the skill's **Initialize** action once per target repo — it scaffolds `docs/context/`, the `AGENTS.md`/`CLAUDE.md`/`GEMINI.md` pointers, the `/ac-` slash commands, and the `.gitignore` entry. Native install is optional: the skill also works by just telling any agent to "use the agent-context skill" — it's designed for explicit invocation, not description-matching.
+
+## Reference
+
+- **[agent-context](./skills/engineering/agent-context/SKILL.md)** — Initialize and maintain vendor-neutral repository context: project overview, durable topics, active work, checkpoints, rolling summaries, a backlog of things to do next, and resumable handoffs across Claude Code, Codex, and Antigravity. Trigger by asking to initialize, save, checkpoint, summarize, restore, or resume project context.
+
+### Lifecycle actions
+
+| Action | What it does |
+|---|---|
+| Initialize | Scaffold `docs/context/`, vendor entrypoints, `/ac-` commands, `.gitignore` |
+| Start work | Create a tracked task under `docs/context/work/` |
+| Checkpoint | Record result, decision, evidence, blocker, and where you stopped (`resume_point`) |
+| Backlog | Capture something for later (`/ac-note`) without starting it |
+| Refresh summary | Force a rolling-summary update before a handoff or session boundary |
+| Resume / Inspect | Report active tasks (blockers first), where each stopped, and the backlog |
+| Complete | Mark a task `completed` and move it to `docs/context/archive/` |
+| Refresh tree | Regenerate `docs/context/generated/repo-tree.md` |
+| Clean | Remove all managed context artifacts |
+
+The summary refresh interval is configured by `every_checkpoints:` in `docs/context/config.yaml` (default 3).
+
+### Slash commands
+
+| Command | What it does |
+|---|---|
+| `/ac-note <text>` | Add an item to the backlog |
+| `/ac-backlog` | View / manage the backlog |
+| `/ac-resume` | Report resumable work (blockers first) plus the backlog |
+| `/ac-checkpoint [note]` | Checkpoint the active task |
+| `/ac-complete` | Complete and archive the active task |
+
+Optional shortcuts — the same actions work in plain language. Installed per vendor at `.claude/commands/`, `.agent/workflows/`, `.codex/prompts/`.

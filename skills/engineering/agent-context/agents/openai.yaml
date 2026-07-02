@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Context"
+  short_description: "Persistent project context and resumable work"
+  default_prompt: "Use $agent-context to initialize or resume repository context."

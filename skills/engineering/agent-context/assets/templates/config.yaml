@@ -1,0 +1,15 @@
+# agent-context-kit:managed
+version: 1
+mode: automatic
+track:
+  trivial_tasks: false
+  read_only_questions: false
+summary:
+  every_checkpoints: 3
+  max_active: 5
+  refresh_before:
+    - session_end
+    - context_compaction
+    - agent_switch
+    - task_blocked
+    - task_completed
