@@ -305,6 +305,7 @@ Run only when the user asks to uninstall managed context.
 3. Delete the installed `ac-*.md` commands from `.claude/commands/`, `.agent/workflows/`, and `.codex/prompts/` (whichever exist). Remove each directory that becomes empty.
 4. Remove the `.context.local/` line from `.gitignore`, keeping other lines.
 5. If the [continuity hook](#continuity-hook-optional) was installed for any vendor, remove it from that vendor's config file per its removal note — only if the user confirms it was installed, since it is opt-in and not part of default Initialize.
+6. If the [checkpoint nudge hook](#checkpoint-nudge-hook-optional) was installed, remove it per its removal note — same confirm-first rule (step 1 already removed its counter file via `.context.local/`).
 
 ## Regenerate index.md
 
@@ -524,6 +525,79 @@ Install procedure, per vendor file — never overwrite the file wholesale, since
 The `matcher` fires on new sessions, `--resume`/`--continue`, `/clear`, and right after compaction — the last one is what matters most: even if nobody remembered to refresh `summary.md` before compaction, the hook re-injects whatever it currently says immediately after, so state is never fully lost.
 
 To remove it (part of [Clean](#clean) if the user asks): in each vendor file that has it, find the `hooks.SessionStart` entry with that exact command string and remove it; delete the `SessionStart` key if it becomes empty; leave every other key untouched.
+
+## Checkpoint nudge hook (optional)
+
+The [Checkpoint](#checkpoint) rule ("record one after a meaningful decision, implementation phase, verification run, or blocker") depends on the agent noticing that moment itself. On a long implementation stretch it can simply forget. This hook closes that gap by reminding the agent after a run of implementation edits — it never writes a checkpoint itself, since the summary/decision/next-action text needs judgment a hook script does not have.
+
+**Claude Code and Codex only.** Both expose a `PostToolUse` hook whose stdout JSON can set `hookSpecificOutput.additionalContext`, verified against each vendor's official docs (code.claude.com/docs/en/hooks; developers.openai.com/codex/hooks). **Antigravity cannot run this hook**: its `PostToolUse` stdin carries no tool/file details (`stepIdx` and `error` only) and its stdout is documented as always `{}` — there is no channel to feed context back to the model from `PostToolUse` at all (confirmed against antigravity.google/docs/hooks). Offer Antigravity users only the [continuity hook](#continuity-hook-optional); do not attempt a nudge hook for it. If Antigravity later adds an equivalent (e.g. via its separate `PreInvocation`/`PostInvocation` + `injectSteps` mechanism), that is a distinct, unverified design — treat it as new work, not an extension of this one.
+
+Run this only when the user explicitly asks for it (e.g. "install the checkpoint nudge hook") — never as part of default Initialize, same rule as the continuity hook. Ask which vendor(s) — Claude Code, Codex, or both — since each installs into that vendor's own config independently.
+
+**Mechanism, both vendors**: keep a counter in `.context.local/checkpoint-nudge-count` (gitignored, ephemeral — never commit it). Any matched edit whose target is under `docs/context/work/` resets the counter to 0 — that *is* a checkpoint (or a new task), so the count of "edits since last checkpoint" restarts. Any other matched edit increments it. Once the counter reaches `threshold`, the hook prints `{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"<reminder text>"}}`, resets the counter, and exits 0. The agent sees the reminder as context on its next turn and decides whether to act on it. The two vendor scripts differ only in how they read the edited path from stdin, because their `PostToolUse` payloads differ:
+
+| Vendor | Matcher | Edited-path source |
+|---|---|---|
+| Claude Code | `Edit\|Write\|NotebookEdit` | `tool_input.file_path` (plain field) |
+| Codex | `apply_patch` | `tool_input.command` — Codex reports every file edit as tool `apply_patch` with the patch text (not a bare path) in `command`; the script greps its `*** Update/Add/Delete File: <path>` marker lines for the standard apply_patch format |
+
+**Install procedure — Claude Code**:
+
+1. Ask the user for a threshold if they didn't give one; default `8`.
+2. Copy [assets/templates/hooks/checkpoint-nudge-claude.sh](../assets/templates/hooks/checkpoint-nudge-claude.sh) to `.claude/hooks/checkpoint-nudge.sh` in the target repo, substituting `{{nudge_threshold}}` with the chosen number. Make it executable (`chmod +x`).
+3. Merge this into `.claude/settings.json` (project scope) — never overwrite the file wholesale, since it may hold unrelated settings/hooks:
+
+   ```json
+   {
+     "hooks": {
+       "PostToolUse": [
+         {
+           "matcher": "Edit|Write|NotebookEdit",
+           "hooks": [
+             {
+               "type": "command",
+               "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/checkpoint-nudge.sh\""
+             }
+           ]
+         }
+       ]
+     }
+   }
+   ```
+
+   If `hooks` has no `PostToolUse` array, add it. If `hooks.PostToolUse` already has an entry with this exact `command` string, it's already installed — do nothing. Otherwise append a new `{matcher, hooks}` entry to the existing array without touching sibling matchers.
+4. Validate the result is well-formed JSON before considering the step done.
+
+**Install procedure — Codex**:
+
+1. Ask the user for a threshold if they didn't give one; default `8` (shared with Claude Code if both are installed — ask once).
+2. Copy [assets/templates/hooks/checkpoint-nudge-codex.sh](../assets/templates/hooks/checkpoint-nudge-codex.sh) to `.codex/hooks/checkpoint-nudge.sh` in the target repo, substituting `{{nudge_threshold}}`. Make it executable (`chmod +x`).
+3. Merge this into `.codex/hooks.json` (project scope) — same non-destructive merge rule as above:
+
+   ```json
+   {
+     "hooks": {
+       "PostToolUse": [
+         {
+           "matcher": "apply_patch",
+           "hooks": [
+             {
+               "type": "command",
+               "command": "sh .codex/hooks/checkpoint-nudge.sh"
+             }
+           ]
+         }
+       ]
+     }
+   }
+   ```
+
+   Codex hooks run with the session `cwd`, not a fixed project-root variable, so the script itself resolves the repo root via `git rev-parse --show-toplevel` — the command above can stay a relative path only if Codex always invokes it from the repo root; if that turns out not to hold in practice, switch it to an absolute path resolved at install time instead. Same add/already-installed/append logic as the Claude Code merge.
+4. Validate the result is well-formed JSON before considering the step done.
+
+To change the cadence later, edit the `threshold=` line directly in the installed script(s) — no reinstall needed.
+
+To remove it (part of [Clean](#clean) if the user asks, per vendor installed): delete the installed script (`.claude/hooks/checkpoint-nudge.sh` and/or `.codex/hooks/checkpoint-nudge.sh`) and `.context.local/checkpoint-nudge-count`; in that vendor's config (`.claude/settings.json` and/or `.codex/hooks.json`), remove the `hooks.PostToolUse` entry whose command references `checkpoint-nudge.sh`, deleting the `PostToolUse` key if it becomes empty, leaving every other key untouched.
 
 ## Task frontmatter schema
 

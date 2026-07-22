@@ -30,6 +30,7 @@ Decide which lifecycle action applies, then follow its steps in [references/proc
 - **Inspect** — report active task status without changing anything.
 - **Clean** — remove managed context artifacts (context tree, vendor entrypoint blocks, `/ac-` commands) when the user asks to uninstall.
 - **Install continuity hook** — opt-in, never automatic: merge a `SessionStart` hook into the vendor's own config (Claude Code, Codex, and/or Antigravity — each is independent) that re-injects `summary.md` after session start, resume, `/clear`, and compaction, so state survives even if nobody remembered to refresh it first. See [Continuity hook](references/procedures.md#continuity-hook-optional).
+- **Install checkpoint nudge hook** — opt-in, Claude Code and/or Codex (not Antigravity — its `PostToolUse` has no context-injection channel): install a `PostToolUse` hook that counts implementation edits since the last checkpoint and, past a threshold, reminds the agent to record one. It only nudges — checkpoint content still requires the agent's judgment. See [Checkpoint nudge hook](references/procedures.md#checkpoint-nudge-hook-optional).
 
 Record a decision, evidence, or blocker only when that fact exists. Do not invent them.
 

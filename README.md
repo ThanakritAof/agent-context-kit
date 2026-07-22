@@ -93,6 +93,19 @@ Claude Code and Codex share this exact shape (merge into the file's existing `ho
 
 Antigravity's `hooks.json` is assumed to use the same shape. See [Continuity hook](skills/engineering/agent-context/references/procedures.md#continuity-hook-optional) for the exact merge/removal steps.
 
+### Checkpoint nudge hook (optional)
+
+The continuity hook above only re-reads `summary.md` back in — it doesn't make the agent write checkpoints. This second, separate hook nudges that side: a `PostToolUse` hook counts implementation edits since the last checkpoint and, past a threshold (default 8), injects a one-line reminder into the agent's context. It never writes a checkpoint itself — the summary/decision text still needs the agent's judgment. Ask the agent to "install the checkpoint nudge hook".
+
+**Claude Code and Codex only.** Antigravity's `PostToolUse` hook has no channel back to the model (its stdout is always `{}`), so this one isn't available there — Antigravity users get the continuity hook only.
+
+| Vendor | File | Script |
+|---|---|---|
+| Claude Code | `.claude/settings.json` (merge) + `.claude/hooks/checkpoint-nudge.sh` | [checkpoint-nudge-claude.sh](skills/engineering/agent-context/assets/templates/hooks/checkpoint-nudge-claude.sh) |
+| Codex | `.codex/hooks.json` (merge) + `.codex/hooks/checkpoint-nudge.sh` | [checkpoint-nudge-codex.sh](skills/engineering/agent-context/assets/templates/hooks/checkpoint-nudge-codex.sh) |
+
+See [Checkpoint nudge hook](skills/engineering/agent-context/references/procedures.md#checkpoint-nudge-hook-optional) for the exact merge/removal steps and why the two scripts differ (Claude Code reports a plain edited-file path; Codex reports a patch blob that has to be parsed for `*** Update File:`-style markers).
+
 ## Reference
 
 - **[agent-context](./skills/engineering/agent-context/SKILL.md)** — Initialize and maintain vendor-neutral repository context: project overview, durable topics, active work, checkpoints, rolling summaries, a backlog of things to do next, and resumable handoffs across Claude Code, Codex, and Antigravity. Trigger by asking to initialize, save, checkpoint, summarize, restore, or resume project context.
